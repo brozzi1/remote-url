@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Remote Uploader</title>
+
+    <style>
+
+        body{
+            background:#0f172a;
+            color:white;
+            font-family:Arial;
+            padding:40px;
+        }
+
+        input{
+            width:100%;
+            padding:15px;
+            border:none;
+            border-radius:10px;
+            margin-bottom:20px;
+        }
+
+        button{
+            padding:15px 30px;
+            border:none;
+            border-radius:10px;
+            background:#2563eb;
+            color:white;
+            cursor:pointer;
+        }
+
+        .bar{
+            width:100%;
+            height:30px;
+            background:#1e293b;
+            border-radius:10px;
+            overflow:hidden;
+            margin-top:20px;
+        }
+
+        .fill{
+            height:100%;
+            width:0%;
+            background:#22c55e;
+            transition:0.3s;
+        }
+
+    </style>
+</head>
+
+<body>
+
+<h1>Remote URL → VikingFile</h1>
+
+<input
+    id="url"
+    placeholder="Enter remote file URL"
+/>
+
+<button onclick="startUpload()">
+    Start Upload
+</button>
+
+<h3 id="status"></h3>
+
+<div class="bar">
+    <div
+        class="fill"
+        id="downloadBar"
+    ></div>
+</div>
+
+<p id="downloadText">
+    Download: 0%
+</p>
+
+<div class="bar">
+    <div
+        class="fill"
+        id="uploadBar"
+    ></div>
+</div>
+
+<p id="uploadText">
+    Upload: 0%
+</p>
+
+<p id="speed"></p>
+
+<div id="result"></div>
+
+<script>
+
+async function startUpload(){
+
+    const url =
+        document.getElementById("url").value;
+
+    const res = await fetch(
+        `/api/start?url=${encodeURIComponent(url)}`
+    );
+
+    const data = await res.json();
+
+    const taskId = data.taskId;
+
+    poll(taskId);
+}
+
+async function poll(taskId){
+
+    const interval = setInterval(async ()=>{
+
+        const res = await fetch(
+            `/api/status/${taskId}`
+        );
+
+        const data = await res.json();
+
+        document.getElementById(
+            "status"
+        ).innerText =
+            data.status;
+
+        document.getElementById(
+            "downloadBar"
+        ).style.width =
+            data.downloadPercent + "%";
+
+        document.getElementById(
+            "uploadBar"
+        ).style.width =
+            data.uploadPercent + "%";
+
+        document.getElementById(
+            "downloadText"
+        ).innerText =
+            "Download: " +
+            data.downloadPercent + "%";
+
+        document.getElementById(
+            "uploadText"
+        ).innerText =
+            "Upload: " +
+            data.uploadPercent + "%";
+
+        document.getElementById(
+            "speed"
+        ).innerText =
+            "Speed: " + data.speed;
+
+        if(data.status === "completed"){
+
+            clearInterval(interval);
+
+            document.getElementById(
+                "result"
+            ).innerHTML = `
+                <h2>Upload Complete</h2>
+                <a
+                  href="${data.result.url}"
+                  target="_blank"
+                  style="color:lime"
+                >
+                  ${data.result.url}
+                </a>
+            `;
+        }
+
+        if(data.status === "error"){
+
+            clearInterval(interval);
+
+            alert(data.error);
+        }
+
+    },1000);
+}
+
+</script>
+
+</body>
+</html>
