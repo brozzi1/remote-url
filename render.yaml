@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: url-downloader
+    name: viking-upload-api
     env: node
     plan: free
     buildCommand: npm install
