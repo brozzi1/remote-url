@@ -1,13 +1,13 @@
 {
-  "name": "render-url-downloader",
+  "name": "render-viking-uploader",
   "version": "1.0.0",
-  "description": "Remote URL Downloader API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "form-data": "^4.0.0"
   }
 }
