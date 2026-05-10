@@ -3,6 +3,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const FormData = require("form-data");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -13,33 +14,73 @@ if (!fs.existsSync(DOWNLOAD_DIR)) {
     fs.mkdirSync(DOWNLOAD_DIR);
 }
 
+const tasks = {};
+
 function formatBytes(bytes) {
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    if (bytes === 0) return '0 Byte';
-    const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
-    return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
+    if (!bytes) return "0 B";
+
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+
+    return (
+        (bytes / Math.pow(1024, i)).toFixed(2) +
+        " " +
+        sizes[i]
+    );
 }
 
-app.get("/", (req, res) => {
-    res.send("VikingFile Upload API Running");
-});
+app.use(express.static("public"));
 
-app.get("/upload", async (req, res) => {
+app.get("/api/start", async (req, res) => {
 
     const remoteUrl = req.query.url;
 
     if (!remoteUrl) {
         return res.json({
-            success: false,
-            error: "Missing url parameter"
+            error: "Missing URL"
         });
     }
 
+    const taskId = uuidv4();
+
+    tasks[taskId] = {
+        status: "starting",
+        downloadPercent: 0,
+        uploadPercent: 0,
+        speed: "0 MB/s",
+        result: null,
+        error: null
+    };
+
+    res.json({
+        taskId
+    });
+
+    processUpload(taskId, remoteUrl);
+});
+
+app.get("/api/status/:id", (req, res) => {
+
+    const task = tasks[req.params.id];
+
+    if (!task) {
+        return res.json({
+            error: "Task not found"
+        });
+    }
+
+    res.json(task);
+});
+
+async function processUpload(taskId, remoteUrl) {
+
     try {
 
-        // -------------------------
-        // STEP 1 DOWNLOAD FILE
-        // -------------------------
+        // --------------------
+        // DOWNLOAD
+        // --------------------
+
+        tasks[taskId].status = "downloading";
 
         const parsed = new URL(remoteUrl);
 
@@ -51,35 +92,41 @@ app.get("/upload", async (req, res) => {
 
         const filePath = path.join(DOWNLOAD_DIR, fileName);
 
-        console.log("Downloading:", remoteUrl);
-
         const response = await axios({
             method: "GET",
             url: remoteUrl,
             responseType: "stream"
         });
 
-        const totalLength = response.headers['content-length'];
+        const total = parseInt(
+            response.headers["content-length"]
+        );
 
         let downloaded = 0;
 
-        const writer = fs.createWriteStream(filePath);
+        const startTime = Date.now();
 
-        response.data.on("data", (chunk) => {
+        response.data.on("data", chunk => {
 
             downloaded += chunk.length;
 
-            if (totalLength) {
+            const percent =
+                (downloaded / total) * 100;
 
-                const percent = (
-                    downloaded / totalLength * 100
-                ).toFixed(2);
+            const elapsed =
+                (Date.now() - startTime) / 1000;
 
-                process.stdout.write(
-                    `\rDownload Progress: ${percent}% | ${formatBytes(downloaded)} / ${formatBytes(totalLength)}`
-                );
-            }
+            const speed = downloaded / elapsed;
+
+            tasks[taskId].downloadPercent =
+                percent.toFixed(2);
+
+            tasks[taskId].speed =
+                formatBytes(speed) + "/s";
         });
+
+        const writer =
+            fs.createWriteStream(filePath);
 
         response.data.pipe(writer);
 
@@ -88,23 +135,22 @@ app.get("/upload", async (req, res) => {
             writer.on("error", reject);
         });
 
-        console.log("\nDownload Complete");
+        // --------------------
+        // GET SERVER
+        // --------------------
 
-        // -------------------------
-        // STEP 2 GET VIKING SERVER
-        // -------------------------
+        tasks[taskId].status = "uploading";
 
         const serverRes = await axios.get(
             "https://vikingfile.com/api/get-server"
         );
 
-        const uploadServer = serverRes.data.server;
+        const uploadServer =
+            serverRes.data.server;
 
-        console.log("Upload Server:", uploadServer);
-
-        // -------------------------
-        // STEP 3 UPLOAD FILE
-        // -------------------------
+        // --------------------
+        // UPLOAD
+        // --------------------
 
         const form = new FormData();
 
@@ -117,57 +163,48 @@ app.get("/upload", async (req, res) => {
 
         const stats = fs.statSync(filePath);
 
-        console.log(
-            `Uploading ${formatBytes(stats.size)}`
-        );
-
         const uploadRes = await axios.post(
             uploadServer,
             form,
             {
                 headers: form.getHeaders(),
-                maxBodyLength: Infinity,
                 maxContentLength: Infinity,
+                maxBodyLength: Infinity,
 
-                onUploadProgress: (progressEvent) => {
+                onUploadProgress: progress => {
 
-                    if (progressEvent.total) {
+                    if (progress.total) {
 
-                        const percent = (
-                            progressEvent.loaded /
-                            progressEvent.total * 100
-                        ).toFixed(2);
+                        const percent =
+                            (
+                                progress.loaded /
+                                progress.total
+                            ) * 100;
 
-                        process.stdout.write(
-                            `\rUpload Progress: ${percent}% | ${formatBytes(progressEvent.loaded)} / ${formatBytes(progressEvent.total)}`
-                        );
+                        tasks[taskId].uploadPercent =
+                            percent.toFixed(2);
                     }
                 }
             }
         );
 
-        console.log("\nUpload Complete");
+        tasks[taskId].status = "completed";
 
-        // -------------------------
-        // FINAL RESPONSE
-        // -------------------------
-
-        res.json({
-            success: true,
-            uploaded: uploadRes.data
-        });
+        tasks[taskId].result =
+            uploadRes.data;
 
     } catch (err) {
 
-        console.error(err);
+        tasks[taskId].status = "error";
 
-        res.json({
-            success: false,
-            error: err.message
-        });
+        tasks[taskId].error =
+            err.message;
     }
-});
+}
 
 app.listen(PORT, () => {
-    console.log(`Server running on ${PORT}`);
+    console.log(
+        "Server running on port",
+        PORT
+    );
 });
